@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Photo Analyzer</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 30px 15px;
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: auto;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, .08);
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        video {
+            width: 100%;
+            display: block;
+            background: #111;
+            border-radius: 12px;
+            margin-bottom: 15px;
+        }
+
+        canvas {
+            display: none;
+        }
+
+        button {
+            width: 100%;
+            border: none;
+            border-radius: 8px;
+            padding: 14px;
+            margin-top: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #startCamera {
+            background: #2563eb;
+            color: white;
+        }
+
+        #captureButton {
+            background: #111827;
+            color: white;
+        }
+
+        #captureButton:disabled {
+            background: #999;
+            cursor: not-allowed;
+        }
+
+        #result {
+            display: none;
+            margin-top: 25px;
+        }
+
+        .item {
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .item strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .error {
+            margin-top: 15px;
+            padding: 12px;
+            background: #fee2e2;
+            color: #991b1b;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        .maps {
+            display: inline-block;
+            margin-top: 15px;
+            padding: 10px 15px;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+        }
+
+        .gps-info {
+            margin-top: 15px;
+            padding: 12px;
+            background: #eff6ff;
+            color: #1e40af;
+            border-radius: 8px;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="card">
+
+        <h1>📷 Photo Analyzer</h1>
+
+        <video
+            id="camera"
+            autoplay
+            playsinline
+        ></video>
+
+        <canvas id="canvas"></canvas>
+
+        <button id="startCamera">
+            📷 Aktifkan Kamera
+        </button>
+
+        <button
+            id="captureButton"
+            disabled
+        >
+            📸 Ambil & Analisis Foto
+        </button>
+
+        <div id="gpsInfo" class="gps-info">
+            📍 Lokasi GPS: -
+        </div>
+
+        <div id="loading" class="loading">
+            ⏳ Memproses foto...
+        </div>
+
+        <div id="error" class="error"></div>
+
+        <div id="result">
+
+            <h2>Hasil Analisis</h2>
+
+            <div class="item">
+                <strong>Status GPS</strong>
+                <span id="gpsStatus">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Latitude</strong>
+                <span id="latitude">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Longitude</strong>
+                <span id="longitude">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Alamat</strong>
+                <span id="address">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Desa / Kelurahan</strong>
+                <span id="desa">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Kecamatan</strong>
+                <span id="kecamatan">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Kabupaten / Kota</strong>
+                <span id="kabupaten">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Provinsi</strong>
+                <span id="provinsi">-</span>
+            </div>
+
+            <div class="item">
+                <strong>Negara</strong>
+                <span id="negara">-</span>
+            </div>
+
+            <a
+                id="googleMaps"
+                class="maps"
+                href="#"
+                target="_blank"
+                style="display:none;"
+            >
+                📍 Buka Google Maps
+            </a>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<!--
+============================================================
+PIEXIFJS
+Library untuk membaca / menulis EXIF JPEG
+============================================================
+-->
+<script src="https://cdn.jsdelivr.net/npm/piexifjs"></script>
+
+
+<script>
+
+const video =
+    document.getElementById("camera");
+
+const canvas =
+    document.getElementById("canvas");
+
+const startCamera =
+    document.getElementById("startCamera");
+
+const captureButton =
+    document.getElementById("captureButton");
+
+const loading =
+    document.getElementById("loading");
+
+const error =
+    document.getElementById("error");
+
+const result =
+    document.getElementById("result");
+
+const gpsInfo =
+    document.getElementById("gpsInfo");
+
+
+let stream = null;
+
+
+/*
+|--------------------------------------------------------------------------
+| Aktifkan Kamera
+|--------------------------------------------------------------------------
+*/
+
+startCamera.addEventListener("click", async () => {
+
+    try {
+
+        error.style.display = "none";
+
+        stream =
+            await navigator.mediaDevices.getUserMedia({
+
+                video: {
+
+                    facingMode: {
+                        ideal: "environment"
+                    }
+
+                },
+
+                audio: false
+
+            });
+
+
+        video.srcObject = stream;
+
+        captureButton.disabled = false;
+
+        startCamera.textContent =
+            "✅ Kamera Aktif";
+
+
+    } catch (err) {
+
+        console.error(err);
+
+        showError(
+            "Tidak bisa mengakses kamera: " +
+            err.message
+        );
+
+    }
+
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| Ambil Lokasi GPS
+|--------------------------------------------------------------------------
+*/
+
+function getCurrentLocation() {
+
+    return new Promise((resolve, reject) => {
+
+        if (!navigator.geolocation) {
+
+            reject(
+                new Error(
+                    "Browser tidak mendukung GPS."
+                )
+            );
+
+            return;
+        }
+
+
+        navigator.geolocation.getCurrentPosition(
+
+            (position) => {
+
+                resolve({
+
+                    latitude:
+                        position.coords.latitude,
+
+                    longitude:
+                        position.coords.longitude,
+
+                    accuracy:
+                        position.coords.accuracy
+
+                });
+
+            },
+
+            (error) => {
+
+                let message =
+                    "Gagal mendapatkan lokasi.";
+
+                switch (error.code) {
+
+                    case error.PERMISSION_DENIED:
+
+                        message =
+                            "Izin lokasi ditolak. Silakan izinkan akses lokasi pada browser.";
+
+                        break;
+
+
+                    case error.POSITION_UNAVAILABLE:
+
+                        message =
+                            "Lokasi tidak tersedia.";
+
+                        break;
+
+
+                    case error.TIMEOUT:
+
+                        message =
+                            "Pengambilan lokasi timeout.";
+
+                        break;
+
+                }
+
+                reject(
+                    new Error(message)
+                );
+
+            },
+
+            {
+
+                enableHighAccuracy: true,
+
+                timeout: 15000,
+
+                maximumAge: 0
+
+            }
+
+        );
+
+    });
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Convert Decimal Latitude / Longitude
+| menjadi format EXIF DMS
+|--------------------------------------------------------------------------
+*/
+
+function decimalToDMS(decimal) {
+
+    const absolute =
+        Math.abs(decimal);
+
+
+    const degrees =
+        Math.floor(absolute);
+
+
+    const minutesFloat =
+        (absolute - degrees) * 60;
+
+
+    const minutes =
+        Math.floor(minutesFloat);
+
+
+    const seconds =
+        (minutesFloat - minutes) * 60;
+
+
+    return [
+
+        [degrees, 1],
+
+        [minutes, 1],
+
+        [
+            Math.round(seconds * 100),
+            100
+        ]
+
+    ];
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Tambahkan GPS ke EXIF
+|--------------------------------------------------------------------------
+*/
+
+function addGPSExif(
+    blob,
+    latitude,
+    longitude
+) {
+
+    return new Promise(
+        (resolve, reject) => {
+
+            const reader =
+                new FileReader();
+
+
+            reader.onload = function () {
+
+                try {
+
+                    const jpeg =
+                        reader.result;
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Buat struktur EXIF
+                    |--------------------------------------------------------------------------
+                    */
+
+                    const exifObj = {
+
+                        "0th": {},
+
+                        "Exif": {},
+
+                        "GPS": {},
+
+                        "1st": {},
+
+                        "thumbnail": null
+
+                    };
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Tentukan arah GPS
+                    |--------------------------------------------------------------------------
+                    */
+
+                    const latRef =
+                        latitude >= 0
+                            ? "N"
+                            : "S";
+
+
+                    const lngRef =
+                        longitude >= 0
+                            ? "E"
+                            : "W";
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Latitude
+                    |--------------------------------------------------------------------------
+                    */
+
+                    exifObj.GPS[
+                        piexif.GPSIFD.GPSLatitudeRef
+                    ] =
+                        latRef;
+
+
+                    exifObj.GPS[
+                        piexif.GPSIFD.GPSLatitude
+                    ] =
+                        decimalToDMS(
+                            latitude
+                        );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Longitude
+                    |--------------------------------------------------------------------------
+                    */
+
+                    exifObj.GPS[
+                        piexif.GPSIFD.GPSLongitudeRef
+                    ] =
+                        lngRef;
+
+
+                    exifObj.GPS[
+                        piexif.GPSIFD.GPSLongitude
+                    ] =
+                        decimalToDMS(
+                            longitude
+                        );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Buat EXIF binary
+                    |--------------------------------------------------------------------------
+                    */
+
+                    const exifBytes =
+                        piexif.dump(
+                            exifObj
+                        );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Masukkan EXIF ke JPEG
+                    |--------------------------------------------------------------------------
+                    */
+
+                    const newJpeg =
+                        piexif.insert(
+                            exifBytes,
+                            jpeg
+                        );
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Convert kembali menjadi Blob
+                    |--------------------------------------------------------------------------
+                    */
+
+                    const byteString =
+                        atob(
+                            newJpeg
+                                .split(",")[1]
+                        );
+
+
+                    const arrayBuffer =
+                        new ArrayBuffer(
+                            byteString.length
+                        );
+
+
+                    const uint8Array =
+                        new Uint8Array(
+                            arrayBuffer
+                        );
+
+
+                    for (
+                        let i = 0;
+                        i < byteString.length;
+                        i++
+                    ) {
+
+                        uint8Array[i] =
+                            byteString.charCodeAt(i);
+
+                    }
+
+
+                    const newBlob =
+                        new Blob(
+                            [uint8Array],
+                            {
+                                type: "image/jpeg"
+                            }
+                        );
+
+
+                    resolve(
+                        newBlob
+                    );
+
+
+                } catch (err) {
+
+                    console.error(err);
+
+                    reject(err);
+
+                }
+
+            };
+
+
+            reader.onerror =
+                reject;
+
+
+            reader.readAsDataURL(blob);
+
+        }
+    );
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Ambil Foto
+|--------------------------------------------------------------------------
+*/
+
+captureButton.addEventListener(
+    "click",
+    async () => {
+
+        if (!stream) {
+
+            showError(
+                "Kamera belum aktif."
+            );
+
+            return;
+        }
+
+
+        try {
+
+            error.style.display =
+                "none";
+
+            result.style.display =
+                "none";
+
+            captureButton.disabled =
+                true;
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 1
+            | Ambil lokasi GPS
+            |--------------------------------------------------------------------------
+            */
+
+            loading.style.display =
+                "block";
+
+            loading.textContent =
+                "📍 Mengambil lokasi GPS...";
+
+
+            const location =
+                await getCurrentLocation();
+
+
+            console.log(
+                "GPS:",
+                location
+            );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Tampilkan GPS yang didapat
+            |--------------------------------------------------------------------------
+            */
+
+            gpsInfo.style.display =
+                "block";
+
+
+            gpsInfo.innerHTML =
+
+                "📍 GPS berhasil didapatkan<br>" +
+
+                "Latitude: " +
+                location.latitude +
+                "<br>" +
+
+                "Longitude: " +
+                location.longitude +
+                "<br>" +
+
+                "Accuracy: ±" +
+                location.accuracy +
+                " meter";
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 2
+            | Sesuaikan canvas dengan resolusi kamera
+            |--------------------------------------------------------------------------
+            */
+
+            canvas.width =
+                video.videoWidth;
+
+            canvas.height =
+                video.videoHeight;
+
+
+            const context =
+                canvas.getContext("2d");
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 3
+            | Ambil frame kamera
+            |--------------------------------------------------------------------------
+            */
+
+            context.drawImage(
+
+                video,
+
+                0,
+
+                0,
+
+                canvas.width,
+
+                canvas.height
+
+            );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 4
+            | Convert canvas menjadi JPEG
+            |--------------------------------------------------------------------------
+            */
+
+            loading.textContent =
+                "📷 Membuat foto...";
+
+
+            canvas.toBlob(
+
+                async (blob) => {
+
+                    if (!blob) {
+
+                        showError(
+                            "Gagal membuat foto."
+                        );
+
+                        return;
+                    }
+
+
+                    try {
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | STEP 5
+                        | Tambahkan GPS ke EXIF
+                        |--------------------------------------------------------------------------
+                        */
+
+                        loading.textContent =
+                            "📝 Menyimpan GPS ke metadata EXIF...";
+
+
+                        const photoWithExif =
+                            await addGPSExif(
+
+                                blob,
+
+                                location.latitude,
+
+                                location.longitude
+
+                            );
+
+
+                        console.log(
+                            "Foto dengan EXIF:",
+                            photoWithExif
+                        );
+
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | STEP 6
+                        | Kirim ke FastAPI
+                        |--------------------------------------------------------------------------
+                        */
+
+                        loading.textContent =
+                            "⏳ Foto sedang dikirim ke server...";
+
+
+                        await sendToAPI(
+                            photoWithExif
+                        );
+
+
+                    } catch (err) {
+
+                        console.error(err);
+
+                        showError(
+
+                            "Gagal memproses metadata GPS: " +
+                            err.message
+
+                        );
+
+                    } finally {
+
+                        loading.style.display =
+                            "none";
+
+                        captureButton.disabled =
+                            false;
+
+                    }
+
+                },
+
+                "image/jpeg",
+
+                0.95
+
+            );
+
+
+        } catch (err) {
+
+            console.error(err);
+
+            loading.style.display =
+                "none";
+
+            captureButton.disabled =
+                false;
+
+
+            showError(
+                err.message
+            );
+
+        }
+
+    }
+);
+
+
+/*
+|--------------------------------------------------------------------------
+| Kirim Foto ke FastAPI
+|--------------------------------------------------------------------------
+*/
+
+async function sendToAPI(blob) {
+
+    try {
+
+        const formData =
+            new FormData();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Nama file
+        |--------------------------------------------------------------------------
+        */
+
+        formData.append(
+
+            "file",
+
+            blob,
+
+            "camera-photo.jpg"
+
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | POST ke FastAPI
+        |--------------------------------------------------------------------------
+        */
+
+        const response =
+            await fetch(
+
+                "http://127.0.0.1:8000/analyze",
+
+                {
+
+                    method: "POST",
+
+                    body: formData
+
+                }
+
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+
+                data.detail ||
+                "API mengalami error"
+
+            );
+
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Tampilkan hasil
+        |--------------------------------------------------------------------------
+        */
+
+        displayResult(data);
+
+
+    } catch (err) {
+
+        console.error(err);
+
+        throw err;
+
+    }
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Tampilkan Hasil
+|--------------------------------------------------------------------------
+*/
+
+function displayResult(data) {
+
+    result.style.display =
+        "block";
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | GPS
+    |--------------------------------------------------------------------------
+    */
+
+    if (!data.gps_found) {
+
+        document.getElementById(
+            "gpsStatus"
+        ).textContent =
+            "⚠️ GPS tidak ditemukan";
+
+        return;
+
+    }
+
+
+    document.getElementById(
+        "gpsStatus"
+    ).textContent =
+        "✅ GPS ditemukan";
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Latitude
+    |--------------------------------------------------------------------------
+    */
+
+    document.getElementById(
+        "latitude"
+    ).textContent =
+
+        data.coordinates?.latitude ??
+        "-";
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Longitude
+    |--------------------------------------------------------------------------
+    */
+
+    document.getElementById(
+        "longitude"
+    ).textContent =
+
+        data.coordinates?.longitude ??
+        "-";
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Location
+    |--------------------------------------------------------------------------
+    */
+
+    const location =
+        data.location || {};
+
+
+    document.getElementById(
+        "address"
+    ).textContent =
+
+        location.address ||
+        "-";
+
+
+    document.getElementById(
+        "desa"
+    ).textContent =
+
+        location.desa_kelurahan ||
+        "-";
+
+
+    document.getElementById(
+        "kecamatan"
+    ).textContent =
+
+        location.kecamatan ||
+        "-";
+
+
+    document.getElementById(
+        "kabupaten"
+    ).textContent =
+
+        location.kabupaten_kota ||
+        "-";
+
+
+    document.getElementById(
+        "provinsi"
+    ).textContent =
+
+        location.provinsi ||
+        "-";
+
+
+    document.getElementById(
+        "negara"
+    ).textContent =
+
+        location.negara ||
+        "-";
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps
+    |--------------------------------------------------------------------------
+    */
+
+    if (data.maps?.google) {
+
+        const maps =
+            document.getElementById(
+                "googleMaps"
+            );
+
+
+        maps.href =
+            data.maps.google;
+
+
+        maps.style.display =
+            "inline-block";
+
+    }
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Error
+|--------------------------------------------------------------------------
+*/
+
+function showError(message) {
+
+    error.textContent =
+        "❌ " + message;
+
+    error.style.display =
+        "block";
+
+}
+
+</script>
+
+</body>
+
+</html>
