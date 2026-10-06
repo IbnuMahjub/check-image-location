@@ -1,17 +1,55 @@
+from io import BytesIO
+
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
 from PIL import Image
 from PIL.ExifTags import GPSTAGS
 from pillow_heif import register_heif_opener
 from geopy.geocoders import Nominatim
 
+
+# Support HEIC / HEIF
 register_heif_opener()
 
 
+# ============================================================
+# FASTAPI
+# ============================================================
+
+app = FastAPI(
+    title="OSINT Photo API",
+    description="API untuk mengambil GPS dan lokasi dari metadata foto",
+    version="1.0.0"
+)
+
+
+# ============================================================
+# CORS
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+
+    allow_origins=[
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+        "https://5e27-203-142-86-77.ngrok-free.app"
+    ],
+
+    allow_credentials=True,
+
+    allow_methods=["*"],
+
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# GPS
+# ============================================================
+
 def convert_to_degrees(value):
-    """
-    Mengubah GPS EXIF dari DMS:
-    (degrees, minutes, seconds)
-    menjadi decimal degree.
-    """
 
     degrees = float(value[0])
     minutes = float(value[1])
@@ -20,163 +58,277 @@ def convert_to_degrees(value):
     return degrees + (minutes / 60) + (seconds / 3600)
 
 
-# ==============================
-# BACA FOTO
-# ==============================
+def extract_gps(image):
 
-image = Image.open("IMG_4987.heic")
+    exif = image.getexif()
 
-exif = image.getexif()
+    try:
+        gps_info = exif.get_ifd(0x8825)
+    except Exception:
+        return None
 
-# 0x8825 = GPSInfo
-gps_info = exif.get_ifd(0x8825)
+    gps = {}
 
-gps = {}
+    for key, value in gps_info.items():
 
-for key, value in gps_info.items():
-    gps[GPSTAGS.get(key, key)] = value
+        gps[GPSTAGS.get(key, key)] = value
 
+    if not gps:
+        return None
 
-# ==============================
-# CEK GPS
-# ==============================
+    if "GPSLatitude" not in gps:
+        return None
 
-if not gps:
-    print("❌ GPS tidak ditemukan di foto.")
-    exit()
+    if "GPSLongitude" not in gps:
+        return None
 
+    latitude = convert_to_degrees(
+        gps["GPSLatitude"]
+    )
 
-# ==============================
-# AMBIL KOORDINAT
-# ==============================
+    longitude = convert_to_degrees(
+        gps["GPSLongitude"]
+    )
 
-latitude = convert_to_degrees(gps["GPSLatitude"])
-longitude = convert_to_degrees(gps["GPSLongitude"])
+    # Selatan
+    if gps.get("GPSLatitudeRef") == "S":
+        latitude = -latitude
 
+    # Barat
+    if gps.get("GPSLongitudeRef") == "W":
+        longitude = -longitude
 
-# ==============================
-# SESUAIKAN ARAH
-# ==============================
-
-if gps["GPSLatitudeRef"] == "S":
-    latitude = -latitude
-
-if gps["GPSLongitudeRef"] == "W":
-    longitude = -longitude
-
-
-# ==============================
-# GOOGLE MAPS
-# ==============================
-
-google_maps_url = (
-    f"https://www.google.com/maps?q={latitude},{longitude}"
-)
+    return {
+        "latitude": latitude,
+        "longitude": longitude
+    }
 
 
-# ==============================
+# ============================================================
 # REVERSE GEOCODING
-# ==============================
+# ============================================================
 
-geolocator = Nominatim(
-    user_agent="cekpoto-osint"
-)
+def reverse_geocode(latitude, longitude):
 
-location = geolocator.reverse(
-    f"{latitude}, {longitude}",
-    language="id"
-)
+    geolocator = Nominatim(
+        user_agent="cekpoto-osint-api"
+    )
+
+    location = geolocator.reverse(
+        f"{latitude}, {longitude}",
+        language="id"
+    )
+
+    if not location:
+
+        return {
+            "address": None,
+            "desa_kelurahan": None,
+            "kecamatan": None,
+            "kabupaten_kota": None,
+            "provinsi": None,
+            "negara": None
+        }
+
+    address = location.raw.get(
+        "address",
+        {}
+    )
+
+    desa = (
+        address.get("village")
+        or address.get("town")
+        or address.get("hamlet")
+    )
+
+    kecamatan = (
+        address.get("municipality")
+        or address.get("suburb")
+        or address.get("district")
+    )
+
+    kabupaten_kota = (
+        address.get("city")
+        or address.get("county")
+        or address.get("city_district")
+    )
+
+    provinsi = (
+        address.get("state")
+        or address.get("province")
+        or address.get("state_district")
+    )
+
+    negara = address.get("country")
 
 
-# ==============================
-# HASIL ALAMAT
-# ==============================
+    # Khusus Jakarta
+    if "Jakarta" in location.address:
 
-address = {}
+        if not provinsi:
+            provinsi = "Daerah Khusus Ibukota Jakarta"
 
-if location:
-    address = location.raw.get("address", {})
+        if not kabupaten_kota:
 
-
-# ==============================
-# AMBIL DETAIL WILAYAH
-# ==============================
-
-desa = (
-    address.get("village")
-    or address.get("town")
-    or address.get("hamlet")
-)
-
-kecamatan = (
-    address.get("municipality")
-    or address.get("suburb")
-    or address.get("district")
-)
-
-kabupaten_kota = (
-    address.get("city")
-    or address.get("county")
-    or address.get("city_district")
-)
-
-provinsi = (
-    address.get("state")
-    or address.get("province")
-    or address.get("state_district")
-)
-
-negara = address.get("country")
+            kabupaten_kota = (
+                address.get("county")
+                or address.get("city")
+            )
 
 
-# ==============================
-# KHUSUS JAKARTA
-# ==============================
+    return {
 
-if "Jakarta" in (location.address if location else ""):
+        "address": location.address,
 
-    if not provinsi:
-        provinsi = "Daerah Khusus Ibukota Jakarta"
+        "desa_kelurahan": desa,
 
-    # Jika city belum mendapatkan Jakarta Selatan,
-    # coba ambil dari county
-    if not kabupaten_kota:
-        kabupaten_kota = (
-            address.get("county")
-            or address.get("city")
+        "kecamatan": kecamatan,
+
+        "kabupaten_kota": kabupaten_kota,
+
+        "provinsi": provinsi,
+
+        "negara": negara
+
+    }
+
+
+# ============================================================
+# HOME
+# ============================================================
+
+@app.get("/")
+def home():
+
+    return {
+        "message": "OSINT Photo API",
+        "status": "running"
+    }
+
+
+# ============================================================
+# ANALYZE PHOTO
+# ============================================================
+
+@app.post("/analyze")
+async def analyze_photo(
+    file: UploadFile = File(...)
+):
+
+    if not file.filename:
+
+        raise HTTPException(
+            status_code=400,
+            detail="File tidak ditemukan"
         )
 
 
-# ==============================
-# OUTPUT
-# ==============================
-
-print("\n==============================")
-print("       📍 FOTO LOCATION")
-print("==============================")
-
-print(f"Latitude       : {latitude}")
-print(f"Longitude      : {longitude}")
-
-print("\n🏠 ALAMAT")
-
-if location:
-    print(location.address)
-else:
-    print("Alamat tidak ditemukan.")
+    # Baca file
+    contents = await file.read()
 
 
-print("\n🏙️ WILAYAH")
+    # Buka gambar
+    try:
 
-print(f"Desa/Kelurahan : {desa or '-'}")
-print(f"Kecamatan      : {kecamatan or '-'}")
-print(f"Kabupaten/Kota : {kabupaten_kota or '-'}")
-print(f"Provinsi       : {provinsi or '-'}")
-print(f"Negara         : {negara or '-'}")
+        image = Image.open(
+            BytesIO(contents)
+        )
+
+    except Exception:
+
+        raise HTTPException(
+            status_code=400,
+            detail="File bukan gambar yang valid"
+        )
 
 
-print("\n🌎 GOOGLE MAPS")
+    # Ambil GPS
+    gps = extract_gps(image)
 
-print(google_maps_url)
 
-print("==============================")
+    # Kalau tidak ada GPS
+    if not gps:
+
+        return {
+
+            "success": True,
+
+            "gps_found": False,
+
+            "message":
+                "GPS tidak ditemukan pada metadata foto",
+
+            "filename":
+                file.filename
+
+        }
+
+
+    latitude = gps["latitude"]
+
+    longitude = gps["longitude"]
+
+
+    # Google Maps
+    google_maps_url = (
+        f"https://www.google.com/maps"
+        f"?q={latitude},{longitude}"
+    )
+
+
+    # Reverse geocoding
+    location = reverse_geocode(
+        latitude,
+        longitude
+    )
+
+
+    return {
+
+        "success": True,
+
+        "gps_found": True,
+
+        "filename":
+            file.filename,
+
+        "coordinates": {
+
+            "latitude":
+                latitude,
+
+            "longitude":
+                longitude
+
+        },
+
+        "location": {
+
+            "address":
+                location["address"],
+
+            "desa_kelurahan":
+                location["desa_kelurahan"],
+
+            "kecamatan":
+                location["kecamatan"],
+
+            "kabupaten_kota":
+                location["kabupaten_kota"],
+
+            "provinsi":
+                location["provinsi"],
+
+            "negara":
+                location["negara"]
+
+        },
+
+        "maps": {
+
+            "google":
+                google_maps_url
+
+        }
+
+    }
